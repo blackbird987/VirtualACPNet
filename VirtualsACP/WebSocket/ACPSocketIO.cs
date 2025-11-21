@@ -14,7 +14,7 @@ public class ACPSocketIO : IDisposable
     public event Func<object, Task>? OnEvaluate;
     public event Func<object, Task>? OnNewTask;
 
-    public ACPSocketIO(string socketUrl, ILogger? logger = null, string agent = null)
+    public ACPSocketIO(string socketUrl, string contract, ILogger? logger = null, string agent = null)
     {
         _logger = logger;
 
@@ -23,28 +23,23 @@ public class ACPSocketIO : IDisposable
 
         _client = new SocketIOClient.SocketIO(socketIOUrl, new SocketIOOptions
         {
-            // Use WebSocket transport (equivalent to transports=['websocket'] in Python)
+            // Use WebSocket transport
             Transport = SocketIOClient.Transport.TransportProtocol.WebSocket,
 
-            // Enable automatic reconnection (equivalent to retry=True in Python)
+            // Enable automatic reconnection
             Reconnection = true,
             ReconnectionAttempts = int.MaxValue,
             ReconnectionDelay = 1000,
+            RandomizationFactor = 0.5,
             ReconnectionDelayMax = 5000,
+            ConnectionTimeout = TimeSpan.FromSeconds(10),
 
-            // Add SDK headers (equivalent to headers_data in Python)
             ExtraHeaders = new Dictionary<string, string>
             {
                 ["x-sdk-version"] = VirtualsAcp.Version,
-                ["x-sdk-language"] = "csharp"
-            },
-
-            Auth = new Dictionary<string, string>
-            {
-                ["walletAddress"] = agent,
-            },
-
-            ConnectionTimeout = TimeSpan.FromSeconds(20),
+                ["x-sdk-language"] = "csharp",
+                ["x-contract-address"] = contract
+            },           
 
             // Enable all transports as fallback
             AutoUpgrade = true
@@ -59,13 +54,7 @@ public class ACPSocketIO : IDisposable
         // Convert from API URL to Socket.IO URL
         // From: https://acpx.virtuals.io/api
         // To: https://acpx.virtuals.io (remove /api suffix)
-
-        if (apiUrl.EndsWith("/api"))
-        {
-            return apiUrl.Substring(0, apiUrl.Length - 4);
-        }
-
-        return apiUrl;
+        return apiUrl.Replace("/api", string.Empty);
     }
 
     private void SetupEventHandlers()
@@ -77,20 +66,17 @@ public class ACPSocketIO : IDisposable
 
             if (OnRoomJoined != null)
             {
-                _ = Task.Run(async () => await OnRoomJoined(data));
+                SafeRun(() => OnRoomJoined(data), "OnRoomJoined");
             }
         });
 
         _client.On("onEvaluate", response =>
         {
             var data = response.GetValue<object>();
-            _logger?.LogInformation("━━━ WebSocket: 'onEvaluate' event received ━━━");
-            _logger?.LogInformation("Received evaluate event: {Data}", JsonSerializer.Serialize(data));
 
             if (OnEvaluate != null)
             {
-                _logger?.LogInformation("Triggering OnEvaluate callback");
-                _ = Task.Run(async () => await OnEvaluate(data));
+                SafeRun(() => OnEvaluate(data), "OnEvaluate");
             }
             else
             {
@@ -101,13 +87,10 @@ public class ACPSocketIO : IDisposable
         _client.On("onNewTask", response =>
         {
             var data = response.GetValue<object>();
-            _logger?.LogInformation("━━━ WebSocket: 'onNewTask' event received ━━━");
-            _logger?.LogInformation("Received new task event: {Data}", JsonSerializer.Serialize(data));
 
             if (OnNewTask != null)
             {
-                _logger?.LogInformation("Triggering OnNewTask callback");
-                _ = Task.Run(async () => await OnNewTask(data));
+                SafeRun(() => OnNewTask(data), "OnNewTask");
             }
             else
             {
@@ -118,27 +101,27 @@ public class ACPSocketIO : IDisposable
 
     private void SetupConnectionEvents()
     {
-        _client.OnConnected += async (sender, e) =>
+        _client.OnConnected += (sender, e) =>
         {
             _logger?.LogInformation("Socket.IO connection established");
         };
 
-        _client.OnDisconnected += async (sender, e) =>
+        _client.OnDisconnected += (sender, e) =>
         {
             _logger?.LogWarning("Socket.IO disconnected: {Reason}", e);
         };
 
-        _client.OnReconnectAttempt += async (sender, e) =>
+        _client.OnReconnectAttempt += (sender, e) =>
         {
             _logger?.LogInformation("Socket.IO reconnection attempt: {Attempt}", e);
         };
 
-        _client.OnReconnected += async (sender, e) =>
+        _client.OnReconnected += (sender, e) =>
         {
             _logger?.LogInformation("Socket.IO reconnected after {Attempt} attempts", e);
         };
 
-        _client.OnError += async (sender, e) =>
+        _client.OnError += (sender, e) =>
         {
             _logger?.LogError("Socket.IO error: {Error}", e);
         };
@@ -192,27 +175,21 @@ public class ACPSocketIO : IDisposable
         {
             _logger?.LogError(ex, "Error stopping Socket.IO connection");
         }
-    }
+    }   
 
-    public async Task EmitAsync(string eventName, object data)
+    public void SafeRun(Func<Task> action, string operationName = "async operation")
     {
-        try
+        _ = Task.Run(async () =>
         {
-            if (_client.Connected)
+            try
             {
-                await _client.EmitAsync(eventName, data);
-                _logger?.LogDebug("Emitted event: {EventName}", eventName);
+                await action();
             }
-            else
+            catch (Exception ex)
             {
-                _logger?.LogWarning("Cannot emit event {EventName}: not connected", eventName);
+                _logger?.LogError($"Error during {operationName}: {ex.Message}");
             }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Failed to emit event: {EventName}", eventName);
-            throw;
-        }
+        });
     }
 
     public bool IsConnected => _client?.Connected ?? false;

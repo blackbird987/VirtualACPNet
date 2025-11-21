@@ -58,15 +58,28 @@ public class NethereumBlockchainClient : IDisposable
         return (BigInteger)(amount * (decimal)multiplier);
     }
 
-    public async Task<string> CreateJobAsync(string providerAddress, string evaluatorAddress, DateTime expiredAt)
+    public async Task<string> CreateJobAsync(
+        string providerAddress,
+        string evaluatorAddress,
+        DateTime expiredAt,
+        string paymentToken,
+        decimal budget,
+        string metadata)
     {
         try
         {
             var expireTimestamp = new BigInteger(((DateTimeOffset)expiredAt).ToUnixTimeSeconds());
+            var formattedBudget = FormatAmount(budget);
 
             var function = _contract.GetFunction("createJob");
 
-            string txHash = await EstimateGasAndSend(function, providerAddress, evaluatorAddress, expireTimestamp);
+            string txHash = await EstimateGasAndSend(function,
+                providerAddress,
+                evaluatorAddress,
+                expireTimestamp,
+                paymentToken,
+                formattedBudget,
+                metadata);
 
             _logger?.LogInformation("Job creation transaction sent: {TxHash}", txHash);
             return txHash;
@@ -169,9 +182,10 @@ public class NethereumBlockchainClient : IDisposable
         string receiverAddress,
         decimal feeAmount,
         FeeType feeType,
-        AcpJobPhase nextPhase,
         MemoType memoType,
         DateTime expiredAt,
+        bool isSecured,
+        AcpJobPhase nextPhase,
         string? token = null)
     {
         try
@@ -184,7 +198,7 @@ public class NethereumBlockchainClient : IDisposable
             var function = _contract.GetFunction("createPayableMemo");
 
             string txHash = await EstimateGasAndSend(function,
-               jobId,
+                jobId,
                 content,
                 tokenAddress,
                 formattedAmount,
@@ -192,8 +206,9 @@ public class NethereumBlockchainClient : IDisposable
                 formattedFeeAmount,
                 (int)feeType,
                 (int)memoType,
-                (int)nextPhase,
-                expireTimestamp);
+                expireTimestamp,
+                isSecured,
+                (int)nextPhase);
 
             _logger?.LogInformation("Payable memo creation transaction sent: {TxHash}", txHash);
             return txHash;
@@ -247,6 +262,393 @@ public class NethereumBlockchainClient : IDisposable
         {
             _logger?.LogError(ex, "Failed to set budget with payment token");
             throw new AcpContractError("Failed to set budget with payment token", ex);
+        }
+    }
+
+    public async Task<string> CreateAccountAsync(string providerAddress, string metadata)
+    {
+        try
+        {
+            var function = _contract.GetFunction("createAccount");
+
+            string txHash = await EstimateGasAndSend(function, providerAddress, metadata);
+
+            _logger?.LogInformation("Account creation transaction sent: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to create account");
+            throw new AcpContractError("Failed to create account", ex);
+        }
+    }
+
+    public async Task<string> CreateJobWithAccountAsync(
+        int accountId,
+        string evaluatorAddress,
+        decimal budget,
+        string paymentToken,
+        DateTime expiredAt)
+    {
+        try
+        {
+            var expireTimestamp = new BigInteger(((DateTimeOffset)expiredAt).ToUnixTimeSeconds());
+            var formattedBudget = FormatAmount(budget);
+
+            var function = _contract.GetFunction("createJobWithAccount");
+
+            string txHash = await EstimateGasAndSend(function,
+                accountId,
+                evaluatorAddress,
+                formattedBudget,
+                paymentToken,
+                expireTimestamp);
+
+            _logger?.LogInformation("Job creation with account transaction sent: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to create job with account");
+            throw new AcpContractError("Failed to create job with account", ex);
+        }
+    }
+
+    public async Task<AccountInfo> GetAccountAsync(int accountId)
+    {
+        try
+        {
+            var function = _contract.GetFunction("getAccount");
+            var result = await function.CallDeserializingToObjectAsync<AccountInfo>(accountId);
+
+            if (result == null)
+            {
+                throw new AcpContractError($"Account not found: {accountId}");
+            }
+
+            _logger?.LogInformation("Account retrieved: {AccountId}", accountId);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get account: {AccountId}", accountId);
+            throw new AcpContractError($"Failed to get account: {accountId}", ex);
+        }
+    }
+
+    public async Task<string> UpdateAccountMetadataAsync(int accountId, string metadata)
+    {
+        try
+        {
+            var function = _contract.GetFunction("updateAccountMetadata");
+
+            string txHash = await EstimateGasAndSend(function, accountId, metadata);
+
+            _logger?.LogInformation("Account metadata update transaction sent: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to update account metadata");
+            throw new AcpContractError("Failed to update account metadata", ex);
+        }
+    }
+
+    public async Task<MemoResult> GetAllMemosAsync(int jobId, int offset, int limit)
+    {
+        try
+        {
+            var function = _contract.GetFunction("getAllMemos");
+            var result = await function.CallDeserializingToObjectAsync<MemoResult>(jobId, offset, limit);
+
+            if (result == null)
+            {
+                throw new AcpContractError($"Failed to get memos for job {jobId}");
+            }
+
+            _logger?.LogInformation("Retrieved {Count} memos for job {JobId} (total: {Total})", result.Memos?.Count ?? 0, jobId, result.Total);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get all memos for job {JobId}", jobId);
+            throw new AcpContractError($"Failed to get all memos for job: {jobId}", ex);
+        }
+    }
+
+    public async Task<MemoResult> GetMemosForMemoTypeAsync(int jobId, MemoType memoType, int offset, int limit)
+    {
+        try
+        {
+            var function = _contract.GetFunction("getMemosForMemoType");
+            var result = await function.CallDeserializingToObjectAsync<MemoResult>(jobId, (int)memoType, offset, limit);
+
+            if (result == null)
+            {
+                throw new AcpContractError($"Failed to get memos for memo type {memoType} in job {jobId}");
+            }
+
+            _logger?.LogInformation("Retrieved {Count} memos of type {MemoType} for job {JobId} (total: {Total})", result.Memos?.Count ?? 0, memoType, jobId, result.Total);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get memos for memo type {MemoType} in job {JobId}", memoType, jobId);
+            throw new AcpContractError($"Failed to get memos for memo type {memoType} in job: {jobId}", ex);
+        }
+    }
+
+    public async Task<MemoResult> GetMemosForPhaseTypeAsync(int jobId, AcpJobPhase phase, int offset, int limit)
+    {
+        try
+        {
+            var function = _contract.GetFunction("getMemosForPhaseType");
+            var result = await function.CallDeserializingToObjectAsync<MemoResult>(jobId, (int)phase, offset, limit);
+
+            if (result == null)
+            {
+                throw new AcpContractError($"Failed to get memos for phase {phase} in job {jobId}");
+            }
+
+            _logger?.LogInformation("Retrieved {Count} memos for phase {Phase} in job {JobId} (total: {Total})", result.Memos?.Count ?? 0, phase, jobId, result.Total);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get memos for phase {Phase} in job {JobId}", phase, jobId);
+            throw new AcpContractError($"Failed to get memos for phase {phase} in job: {jobId}", ex);
+        }
+    }
+
+    public async Task<bool> CanSignAsync(string account, int jobId)
+    {
+        try
+        {
+            var function = _contract.GetFunction("canSign");
+            var result = await function.CallAsync<bool>(account, jobId);
+
+            _logger?.LogInformation("Can sign check for account {Account} and job {JobId}: {Result}", account, jobId, result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to check if account {Account} can sign job {JobId}", account, jobId);
+            throw new AcpContractError($"Failed to check if account can sign job: {jobId}", ex);
+        }
+    }
+
+    public async Task<bool> IsJobEvaluatorAsync(int jobId, string account)
+    {
+        try
+        {
+            var function = _contract.GetFunction("isJobEvaluator");
+            var result = await function.CallAsync<bool>(jobId, account);
+
+            _logger?.LogInformation("Is evaluator check for account {Account} and job {JobId}: {Result}", account, jobId, result);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to check if account {Account} is evaluator for job {JobId}", account, jobId);
+            throw new AcpContractError($"Failed to check if account is evaluator for job: {jobId}", ex);
+        }
+    }
+
+    public async Task<string> ClaimBudgetAsync(int jobId)
+    {
+        try
+        {
+            var function = _contract.GetFunction("claimBudget");
+
+            string txHash = await EstimateGasAndSend(function, jobId);
+
+            _logger?.LogInformation("Claim budget transaction sent for job {JobId}: {TxHash}", jobId, txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to claim budget for job {JobId}", jobId);
+            throw new AcpContractError($"Failed to claim budget for job: {jobId}", ex);
+        }
+    }
+
+    public async Task<string> SetBudgetAsync(int jobId, decimal amount)
+    {
+        try
+        {
+            var formattedAmount = FormatAmount(amount);
+            var function = _contract.GetFunction("setBudget");
+
+            string txHash = await EstimateGasAndSend(function, jobId, formattedAmount);
+
+            _logger?.LogInformation("Set budget transaction sent for job {JobId}: {TxHash}", jobId, txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to set budget for job {JobId}", jobId);
+            throw new AcpContractError($"Failed to set budget for job: {jobId}", ex);
+        }
+    }
+
+    public async Task<IAcpJobX402PaymentDetails> GetX402PaymentDetailsAsync(int jobId)
+    {
+        try
+        {
+            var function = _contract.GetFunction("x402PaymentDetails");
+            var result = await function.CallDeserializingToObjectAsync<X402PaymentDetailsResult>(jobId);
+
+            if (result == null)
+            {
+                throw new AcpContractError($"Failed to get X402 payment details for job {jobId}");
+            }
+
+            var details = new IAcpJobX402PaymentDetails
+            {
+                IsX402 = result.IsX402,
+                IsBudgetReceived = result.IsBudgetReceived
+            };
+
+            _logger?.LogInformation("X402 payment details for job {JobId}: IsX402={IsX402}, IsBudgetReceived={IsBudgetReceived}", 
+                jobId, details.IsX402, details.IsBudgetReceived);
+            return details;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get X402 payment details for job {JobId}", jobId);
+            throw new AcpContractError($"Failed to get X402 payment details for job: {jobId}", ex);
+        }
+    }
+
+    [FunctionOutput]
+    private class X402PaymentDetailsResult
+    {
+        [Parameter("bool", "isX402", 1)]
+        public bool IsX402 { get; set; }
+
+        [Parameter("bool", "isBudgetReceived", 2)]
+        public bool IsBudgetReceived { get; set; }
+    }
+
+    public async Task<string> CreateX402JobAsync(
+        string providerAddress,
+        string evaluatorAddress,
+        DateTime expiredAt,
+        string paymentToken,
+        decimal budget,
+        string metadata)
+    {
+        try
+        {
+            var expireTimestamp = new BigInteger(((DateTimeOffset)expiredAt).ToUnixTimeSeconds());
+            var formattedBudget = FormatAmount(budget);
+
+            var function = _contract.GetFunction("createX402Job");
+
+            string txHash = await EstimateGasAndSend(function,
+                providerAddress,
+                evaluatorAddress,
+                expireTimestamp,
+                paymentToken,
+                formattedBudget,
+                metadata);
+
+            _logger?.LogInformation("X402 job creation transaction sent: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to create X402 job");
+            throw new AcpContractError("Failed to create X402 job", ex);
+        }
+    }
+
+    public async Task<string> CreateX402JobWithAccountAsync(
+        int accountId,
+        string evaluatorAddress,
+        decimal budget,
+        string paymentToken,
+        DateTime expiredAt)
+    {
+        try
+        {
+            var expireTimestamp = new BigInteger(((DateTimeOffset)expiredAt).ToUnixTimeSeconds());
+            var formattedBudget = FormatAmount(budget);
+
+            var function = _contract.GetFunction("createX402JobWithAccount");
+
+            string txHash = await EstimateGasAndSend(function,
+                accountId,
+                evaluatorAddress,
+                formattedBudget,
+                paymentToken,
+                expireTimestamp);
+
+            _logger?.LogInformation("X402 job creation with account transaction sent: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to create X402 job with account");
+            throw new AcpContractError("Failed to create X402 job with account", ex);
+        }
+    }
+
+    public async Task<string> SubmitTransferWithAuthorizationAsync(
+        string from,
+        string to,
+        BigInteger value,
+        BigInteger validAfter,
+        BigInteger validBefore,
+        string nonce,
+        string signature)
+    {
+        try
+        {
+            // Parse signature into v, r, s components
+            var signatureBytes = signature.HexToByteArray();
+            if (signatureBytes.Length != 65)
+            {
+                throw new AcpContractError("Invalid signature length");
+            }
+
+            var v = signatureBytes[64];
+            var r = new byte[32];
+            var s = new byte[32];
+            Array.Copy(signatureBytes, 0, r, 0, 32);
+            Array.Copy(signatureBytes, 32, s, 0, 32);
+
+            // Convert nonce from hex string to bytes32
+            var nonceBytes = nonce.HexToByteArray();
+            if (nonceBytes.Length > 32)
+            {
+                throw new AcpContractError("Invalid nonce length");
+            }
+
+            var nonceBytes32 = new byte[32];
+            Array.Copy(nonceBytes, 0, nonceBytes32, 32 - nonceBytes.Length, nonceBytes.Length);
+
+            var fiatTokenContract = _web3.Eth.GetContract(ContractAbis.Erc20Abi, _config.PaymentTokenAddress);
+            var function = fiatTokenContract.GetFunction("transferWithAuthorization");
+
+            string txHash = await EstimateGasAndSend(function,
+                from,
+                to,
+                value,
+                validAfter,
+                validBefore,
+                nonceBytes32,
+                v,
+                r,
+                s);
+
+            _logger?.LogInformation("Transfer with authorization transaction sent: {TxHash}", txHash);
+            return txHash;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to submit transfer with authorization");
+            throw new AcpContractError("Failed to submit transfer with authorization", ex);
         }
     }
 

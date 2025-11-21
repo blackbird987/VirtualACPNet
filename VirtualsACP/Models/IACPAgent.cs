@@ -52,6 +52,9 @@ public class IACPAgent
     [JsonPropertyName("metrics")]
     public Dictionary<string, object>? Metrics { get; set; }
 
+    [JsonPropertyName("contractAddress")]
+    public string? ContractAddress { get; set; }
+
     [JsonPropertyName("processingTime")]
     public string? ProcessingTime { get; set; }
 }

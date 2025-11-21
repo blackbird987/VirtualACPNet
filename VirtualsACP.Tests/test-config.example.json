@@ -1,0 +1,12 @@
+{
+  "buyerPrivateKey": "your_buyer_private_key_here",
+  "buyerWalletAddress": "0x...",
+  "sellerPrivateKey": "your_seller_private_key_here",
+  "sellerWalletAddress": "0x...",
+  "evaluatorAddress": "0x...",
+  "network": "base",
+  "walletPrivateKey": "your_private_key_here",
+  "agentWalletAddress": "0x...",
+  "providerAddress": "0x..."
+}
+

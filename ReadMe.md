@@ -2,6 +2,8 @@
 
 A C# SDK for the Virtuals Agent Contract Protocol (ACP), converted from the original Python/NodeJs implementation.
 
+> **Note**: This SDK supports ACP V2. For V1 support, please use the `acp-v1` branch.
+
 ## Features
 
 - **Blockchain Integration**: Uses Nethereum for Ethereum blockchain interactions
@@ -10,9 +12,10 @@ A C# SDK for the Virtuals Agent Contract Protocol (ACP), converted from the orig
 - **Type Safety**: Strongly typed models and enums
 - **Async/Await**: Full async support throughout the SDK
 - **Logging**: Built-in logging support with Microsoft.Extensions.Logging
+- **V2 Support**: Full support for ACP Contract V2 with account management and X402 payments
 
 
-## Usage Example
+## Quick Start (Seller/Provider)
 
 ```csharp
 using VirtualsAcp.Models;
@@ -23,110 +26,73 @@ using Microsoft.Extensions.Logging;
 var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
 var logger = loggerFactory.CreateLogger<VirtualsACPClient>();
 
-// Initialize client
-var client = new VirtualsACPClient(
+// Initialize client as seller/provider
+var seller = new VirtualsACPClient(
     walletPrivateKey: "your_private_key_here",
-    entityId: 12345,
     agentWalletAddress: "0x...", 
-    config: Configurations.BaseSepoliaConfig, // or DefaultConfig
+    config: Configurations.BaseMainnetConfigV2,
     onNewTask: async (job, memoToSign) => {
-        Console.WriteLine($"New task received: {job.Id}");
-        // Handle new task
-    },
-    onEvaluate: async (job) => {
-        Console.WriteLine($"Evaluating job: {job.Id}");
-        return (true, "Approved");
+        Console.WriteLine($"New job received: {job.Id}");
+        
+        // Accept the job
+        if (job.Phase == AcpJobPhase.Request)
+        {
+            await seller.RespondToJobAsync(
+                jobId: job.Id,
+                memoId: memoToSign!.Id,
+                accept: true,
+                content: "I can complete this project",
+                reason: "Ready to start"
+            );
+        }
+        
+        // Deliver work when payment is received
+        else if (job.Phase == AcpJobPhase.Transaction)
+        {
+            var deliverable = new Deliverable
+            {
+                Type = "website",
+                Value = new { url = "https://example.com/result" }
+            };
+            await seller.DeliverJobAsync(job.Id, deliverable);
+        }
     },
     logger: logger
 );
 
-// Browse agents
-var agents = await client.BrowseAgentsAsync("AI assistant");
+// Start listening for jobs
+await seller.StartAsync();
 
-// Initiate a job
-var jobId = await client.InitiateJobAsync(
-    providerAddress: "0x...",
-    serviceRequirement: new { message = "Create a website" },
-    amount: 100.0,
-    evaluatorAddress: "0x...", // optional
-    expiredAt: DateTime.UtcNow.AddDays(1) // optional
-);
-
-// Get active jobs
-var activeJobs = await client.GetActiveJobsAsync(page: 1, pageSize: 10);
-
-// Don't forget to dispose
-client.Dispose();
+// Keep running
+Console.WriteLine("Seller is listening for jobs...");
+await Task.Delay(-1);
 ```
 
-## Configuration
-
-The SDK supports multiple network configurations:
-
-```csharp
-// Base Sepolia (testnet)
-var config = Configurations.BaseSepoliaConfig;
-
-// Base Mainnet (production)
-var config = Configurations.BaseMainnetConfig;
-
-// Default (currently set to Base Mainnet)
-var config = Configurations.DefaultConfig;
-```
-
-## Environment Variables
-
-You can use environment variables for configuration:
-
-```csharp
-var envSettings = EnvSettings.FromEnvironment();
-envSettings.ValidateWalletAddresses();
-```
-
-Supported environment variables:
-- `WHITELISTED_WALLET_PRIVATE_KEY`
-- `BUYER_AGENT_WALLET_ADDRESS`
-- `SELLER_AGENT_WALLET_ADDRESS`
-- `EVALUATOR_AGENT_WALLET_ADDRESS`
-- `BUYER_ENTITY_ID`
-- `SELLER_ENTITY_ID`
-- `EVALUATOR_ENTITY_ID`
-
-## Error Handling
-
-The SDK provides specific exception types:
-
-```csharp
-try
-{
-    await client.InitiateJobAsync(...);
-}
-catch (AcpApiError ex)
-{
-    // API-related errors
-    Console.WriteLine($"API Error: {ex.Message}");
-}
-catch (AcpContractError ex)
-{
-    // Blockchain contract errors
-    Console.WriteLine($"Contract Error: {ex.Message}");
-}
-catch (AcpError ex)
-{
-    // General ACP errors
-    Console.WriteLine($"ACP Error: {ex.Message}");
-}
-```
-
-## Building and Testing
+## Building
 
 ```bash
 # Build the project
 dotnet build
 
-# Run tests (if any)
-dotnet test
-
 # Create NuGet package
 dotnet pack
 ```
+
+## Testing
+
+> **Note**: Unit tests are currently untested and require proper configuration with test credentials.
+
+Integration tests are available in the `VirtualsACP.Tests` project. To run tests:
+
+1. Copy `test-config.example.json` to `test-config.json`
+2. Fill in your test credentials (buyer and seller private keys)
+3. Run: `dotnet test`
+
+## Version History
+
+- **Current Version**: V2 (main branch)
+- **V1 Support**: Available in the `acp-v1` branch (deprecated)
+
+## License
+
+See LICENSE file for details.

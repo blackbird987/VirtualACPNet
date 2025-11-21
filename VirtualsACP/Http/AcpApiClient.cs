@@ -21,6 +21,54 @@ public class AcpApiClient : IDisposable
         _httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
     }
 
+    private async Task<T?> SendRequestAsync<T>(
+        string url,
+        Dictionary<string, string>? headers = null,
+        string errorContext = "request") where T : class
+    {
+        try
+        {
+            _logger?.LogDebug("Making request to: {Url}", url);
+
+            HttpRequestMessage request;
+            if (headers != null && headers.Any())
+            {
+                request = new HttpRequestMessage(HttpMethod.Get, url);
+                foreach (var header in headers)
+                {
+                    request.Headers.Add(header.Key, header.Value);
+                }
+            }
+            else
+            {
+                request = new HttpRequestMessage(HttpMethod.Get, url);
+            }
+
+            var response = await _httpClient.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+
+            var content = await response.Content.ReadAsStringAsync();
+            var result = JsonSerializer.Deserialize<ApiResponse<T>>(content);
+
+            if (result?.Error != null)
+            {
+                throw new AcpApiError(result.Error.Message);
+            }
+
+            return result?.Data;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger?.LogError(ex, "HTTP error during {ErrorContext}", errorContext);
+            throw new AcpApiError($"Failed: {errorContext}", ex);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Unexpected error during {ErrorContext}", errorContext);
+            throw new AcpError($"An unexpected error occurred: {errorContext}", ex);
+        }
+    }
+
     public async Task<List<IACPAgent>> BrowseAgentsAsync(
         string keyword,
         string? cluster = null,
@@ -30,61 +78,41 @@ public class AcpApiClient : IDisposable
         AcpOnlineStatus? onlineStatus = null,
         string? walletAddressToExclude = null)
     {
-        try
+        var url = $"{_baseUrl}/agents/v3/search?search={Uri.EscapeDataString(keyword)}";
+        
+        if (sortBy != null && sortBy.Any())
         {
-            var url = $"{_baseUrl}/agents/v2/search?search={Uri.EscapeDataString(keyword)}";
-            
-            if (sortBy != null && sortBy.Any())
-            {
-                var sortValues = string.Join(",", sortBy.Select(s => s.ToString()));
-                url += $"&sortBy={Uri.EscapeDataString(sortValues)}";
-            }
-
-            if (topK.HasValue)
-            {
-                url += $"&top_k={topK.Value}";
-            }
-
-            if (!string.IsNullOrEmpty(walletAddressToExclude))
-            {
-                url += $"&walletAddressesToExclude={Uri.EscapeDataString(walletAddressToExclude)}";
-            }
-
-            if (!string.IsNullOrEmpty(cluster))
-            {
-                url += $"&cluster={Uri.EscapeDataString(cluster)}";
-            }
-
-            if (graduationStatus.HasValue)
-            {
-                url += $"&graduationStatus={graduationStatus.Value.ToString().ToLowerInvariant()}";
-            }
-
-            if (onlineStatus.HasValue)
-            {
-                url += $"&onlineStatus={onlineStatus.Value.ToString().ToLowerInvariant()}";
-            }
-
-            _logger?.LogDebug("Making request to: {Url}", url);
-
-            var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<ApiResponse<List<IACPAgent>>>(content);
-
-            return result?.Data ?? new List<IACPAgent>();
+            var sortValues = string.Join(",", sortBy.Select(s => s.ToString()));
+            url += $"&sortBy={Uri.EscapeDataString(sortValues)}";
         }
-        catch (HttpRequestException ex)
+
+        if (topK.HasValue)
         {
-            _logger?.LogError(ex, "HTTP error while browsing agents");
-            throw new AcpApiError("Failed to browse agents", ex);
+            url += $"&top_k={topK.Value}";
         }
-        catch (Exception ex)
+
+        if (!string.IsNullOrEmpty(walletAddressToExclude))
         {
-            _logger?.LogError(ex, "Unexpected error while browsing agents");
-            throw new AcpError("An unexpected error occurred while browsing agents", ex);
+            url += $"&walletAddressesToExclude={Uri.EscapeDataString(walletAddressToExclude)}";
         }
+
+        if (!string.IsNullOrEmpty(cluster))
+        {
+            url += $"&cluster={Uri.EscapeDataString(cluster)}";
+        }
+
+        if (graduationStatus.HasValue)
+        {
+            url += $"&graduationStatus={graduationStatus.Value.ToString().ToLowerInvariant()}";
+        }
+
+        if (onlineStatus.HasValue)
+        {
+            url += $"&onlineStatus={onlineStatus.Value.ToString().ToLowerInvariant()}";
+        }
+
+        var result = await SendRequestAsync<List<IACPAgent>>(url, null, "browsing agents");
+        return result ?? new List<IACPAgent>();
     }
 
     public async Task<List<ACPJob>> GetActiveJobsAsync(string walletAddress, int page = 1, int pageSize = 10)
@@ -102,136 +130,100 @@ public class AcpApiClient : IDisposable
         return await GetJobsAsync("cancelled", walletAddress, page, pageSize);
     }
 
+    public async Task<List<ACPJob>> GetPendingMemoJobsAsync(string walletAddress, int page = 1, int pageSize = 10)
+    {
+        var url = $"{_baseUrl}/jobs/pending-memos?pagination[page]={page}&pagination[pageSize]={pageSize}";
+        var headers = new Dictionary<string, string> { ["wallet-address"] = walletAddress };
+        
+        var result = await SendRequestAsync<List<ACPJob>>(url, headers, "getting pending memo jobs");
+        return result ?? new List<ACPJob>();
+    }
+
     private async Task<List<ACPJob>> GetJobsAsync(string jobType, string walletAddress, int page, int pageSize)
     {
-        try
-        {
-            var url = $"{_baseUrl}/jobs/{jobType}?pagination[page]={page}&pagination[pageSize]={pageSize}";
-            
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("wallet-address", walletAddress);
-
-            _logger?.LogDebug("Making request to: {Url}", url);
-
-            var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<ApiResponse<List<ACPJob>>>(content);
-
-            return result?.Data ?? new List<ACPJob>();
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger?.LogError(ex, "HTTP error while getting {JobType} jobs", jobType);
-            throw new AcpApiError($"Failed to get {jobType} jobs", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Unexpected error while getting {JobType} jobs", jobType);
-            throw new AcpError($"An unexpected error occurred while getting {jobType} jobs", ex);
-        }
+        var url = $"{_baseUrl}/jobs/{jobType}?pagination[page]={page}&pagination[pageSize]={pageSize}";
+        var headers = new Dictionary<string, string> { ["wallet-address"] = walletAddress };
+        
+        var result = await SendRequestAsync<List<ACPJob>>(url, headers, $"getting {jobType} jobs");
+        return result ?? new List<ACPJob>();
     }
 
     public async Task<ACPJob?> GetJobByIdAsync(int jobId, string walletAddress)
     {
-        try
-        {
-            var url = $"{_baseUrl}/jobs/{jobId}";
-            
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("wallet-address", walletAddress);
-
-            _logger?.LogDebug("Making request to: {Url}", url);
-
-            var response = await _httpClient.SendAsync(request);
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<ApiResponse<ACPJob>>(content);
-
-            if (result?.Error != null)
-            {
-                throw new AcpApiError(result.Error.Message);
-            }
-
-            return result?.Data;
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger?.LogError(ex, "HTTP error while getting job {JobId}", jobId);
-            throw new AcpApiError($"Failed to get job by ID: {jobId}", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Unexpected error while getting job {JobId}", jobId);
-            throw new AcpError($"An unexpected error occurred while getting job: {jobId}", ex);
-        }
+        var url = $"{_baseUrl}/jobs/{jobId}";
+        var headers = new Dictionary<string, string> { ["wallet-address"] = walletAddress };
+        
+        return await SendRequestAsync<ACPJob>(url, headers, $"getting job {jobId}");
     }
 
     public async Task<ACPMemo?> GetMemoByIdAsync(int jobId, int memoId, string walletAddress)
     {
+        var url = $"{_baseUrl}/jobs/{jobId}/memos/{memoId}";
+        var headers = new Dictionary<string, string> { ["wallet-address"] = walletAddress };
+        
+        return await SendRequestAsync<ACPMemo>(url, headers, $"getting memo {memoId} for job {jobId}");
+    }
+
+    public async Task<IACPAgent?> GetAgentAsync(string walletAddress)
+    {
+        var url = $"{_baseUrl}/agents?filters[walletAddress]={Uri.EscapeDataString(walletAddress)}";
+        
+        var result = await SendRequestAsync<List<IACPAgent>>(url, null, $"getting agent {walletAddress}");
+        return result?.FirstOrDefault();
+    }
+
+    public async Task<AcpAccountData?> GetAccountByJobIdAsync(int jobId)
+    {
+        var url = $"{_baseUrl}/accounts/job/{jobId}";
+        return await SendRequestAsync<AcpAccountData>(url, null, $"getting account by job ID {jobId}");
+    }
+
+    public async Task<AcpAccountData?> GetAccountByClientAndProviderAsync(string clientAddress, string providerAddress)
+    {
+        var url = $"{_baseUrl}/accounts/client/{Uri.EscapeDataString(clientAddress)}/provider/{Uri.EscapeDataString(providerAddress)}";
+        return await SendRequestAsync<AcpAccountData>(url, null, $"getting account by client {clientAddress} and provider {providerAddress}");
+    }
+
+    public async Task<OffChainJob> UpdateJobX402NonceAsync(int jobId, string nonce, string signature)
+    {
         try
         {
-            var url = $"{_baseUrl}/jobs/{jobId}/memos/{memoId}";
-            
-            var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.Add("wallet-address", walletAddress);
+            var url = $"{_baseUrl}/jobs/{jobId}/x402-nonce";
 
             _logger?.LogDebug("Making request to: {Url}", url);
+
+            var request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Headers.Add("x-signature", signature);
+            request.Headers.Add("x-nonce", nonce);
+            request.Content = new StringContent(
+                System.Text.Json.JsonSerializer.Serialize(new { data = new { nonce } }),
+                System.Text.Encoding.UTF8,
+                "application/json");
 
             var response = await _httpClient.SendAsync(request);
             response.EnsureSuccessStatusCode();
 
             var content = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<ApiResponse<ACPMemo>>(content);
+            var result = System.Text.Json.JsonSerializer.Deserialize<OffChainJob>(content);
 
-            if (result?.Error != null)
+            if (result == null)
             {
-                throw new AcpApiError(result.Error.Message);
+                throw new AcpApiError($"Failed to deserialize response for job {jobId}");
             }
 
-            return result?.Data;
+            return result;
         }
         catch (HttpRequestException ex)
         {
-            _logger?.LogError(ex, "HTTP error while getting memo {MemoId} for job {JobId}", memoId, jobId);
-            throw new AcpApiError($"Failed to get memo by ID: {memoId}", ex);
+            _logger?.LogError(ex, "HTTP error while updating X402 nonce for job {JobId}", jobId);
+            throw new AcpApiError($"Failed to update X402 nonce for job: {jobId}", ex);
         }
         catch (Exception ex)
         {
-            _logger?.LogError(ex, "Unexpected error while getting memo {MemoId} for job {JobId}", memoId, jobId);
-            throw new AcpError($"An unexpected error occurred while getting memo: {memoId}", ex);
+            _logger?.LogError(ex, "Unexpected error while updating X402 nonce for job {JobId}", jobId);
+            throw new AcpError($"An unexpected error occurred while updating X402 nonce for job: {jobId}", ex);
         }
     }
-
-    public async Task<IACPAgent?> GetAgentAsync(string walletAddress)
-    {
-        try
-        {
-            var url = $"{_baseUrl}/agents?filters[walletAddress]={Uri.EscapeDataString(walletAddress)}";
-
-            _logger?.LogDebug("Making request to: {Url}", url);
-
-            var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
-
-            var content = await response.Content.ReadAsStringAsync();
-            var result = JsonSerializer.Deserialize<ApiResponse<List<IACPAgent>>>(content);
-
-            return result?.Data?.FirstOrDefault();
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger?.LogError(ex, "HTTP error while getting agent {WalletAddress}", walletAddress);
-            throw new AcpApiError("Failed to get agent", ex);
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Unexpected error while getting agent {WalletAddress}", walletAddress);
-            throw new AcpError("An unexpected error occurred while getting agent", ex);
-        }
-    }   
 
     public void Dispose()
     {
@@ -253,3 +245,4 @@ public class AcpApiClient : IDisposable
         public string Message { get; set; } = string.Empty;
     }
 }
+

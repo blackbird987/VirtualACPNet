@@ -18,37 +18,36 @@ public class JobManagementExample
         var logger = loggerFactory.CreateLogger<VirtualsACPClient>();
 
         // ⚠️ CONFIGURATION REQUIRED:
-        // Set the DegenAI seller address (where to send jobs)
+        // Set the seller address (where to send jobs)
         
-        // Provider (seller) - DegenAI agent address (running separately)
+        // Provider (seller) - agent address (running separately)
         // We only need the ADDRESS to send jobs to, not the private key
-        string agentWalletSeller = "0xDf15aF9E38d713E5eF207D1b54b91b1dBBE6cC29"; // Your ACP Agent Address from DegenAI Settings (/admin/settings)
+        string agentWalletSeller = ""; 
         
         // Requester (buyer) - Test requester credentials (pre-configured)
-        string privateKeyBuyer = "ee8d256c87f58367957ee2b86af6d9c246694b8d332229527e15c46bf26d4772";
-        string agentWalletBuyer = "0xE2B42Ff4BB15D7708994F94A6A3a0329c1CeE40d";
+        string privateKeyBuyer = ""; 
+        string agentWalletBuyer = ""; 
 
         // Validate configuration
         if (string.IsNullOrWhiteSpace(agentWalletSeller))
         {
-            Console.WriteLine("❌ ERROR: DegenAI seller address not set!");
+            Console.WriteLine("❌ ERROR: seller address not set!");
             Console.WriteLine("Please set agentWalletSeller in JobManagementExample.cs (line 26)");
-            Console.WriteLine("Use your ACP Agent Address from DegenAI Settings page (/admin/settings)");
             Console.WriteLine("\nExample: agentWalletSeller = \"0x1234...\";");
             return;
         }
 
-        Console.WriteLine($"✅ Sending jobs to DegenAI: {agentWalletSeller}");
+        Console.WriteLine($"✅ Sending jobs to: {agentWalletSeller}");
         Console.WriteLine($"✅ Using test buyer: {agentWalletBuyer}");     
 
 
         // Initialize client with event handlers
-        // COMMENTED OUT: DegenAI is the actual seller/provider
+        // COMMENTED OUT: Seller/provider functionality is not tested in this example
         // We only need the buyer/client in this example to avoid wallet conflicts
         // VirtualsACPClient provider = null;
         VirtualsACPClient client = null;
         
-        /* PROVIDER COMMENTED OUT - DegenAI is the seller
+        /* PROVIDER COMMENTED OUT - example is currently only tested as buyer
         provider = new VirtualsACPClient(
             walletPrivateKey: privateKeySeller,
             agentWalletAddress: agentWalletSeller,
@@ -104,31 +103,11 @@ public class JobManagementExample
            config: Configurations.BaseMainnetConfig,
            onNewTask: async (job, memoToSign) =>
             {
-                Console.WriteLine($"\n[DEBUG] ━━━ onNewTask FIRED ━━━");
-                Console.WriteLine($"[DEBUG] Job={job.Id}, Phase={job.Phase}, MemoToSign={memoToSign?.Id}");
-                Console.WriteLine($"[DEBUG] MemoType={memoToSign?.Type}, NextPhase={memoToSign?.NextPhase}");
-                Console.WriteLine($"[DEBUG] Total Memos={job.Memos.Count}");
-                
-                // NEW: Log ALL memos to see complete history
-                Console.WriteLine($"[DEBUG] ━━━ ALL MEMOS ━━━");
-                foreach (var memo in job.Memos)
-                {
-                    Console.WriteLine($"[DEBUG]   Memo {memo.Id}: Type={memo.Type}, Status={memo.Status}, NextPhase={memo.NextPhase}");
-                }
-                
-                // NEW: Check if there's a DELIVER_SERVICE memo we should be handling
-                var deliveryMemo = job.Memos.FirstOrDefault(m => m.Type == "DELIVER_SERVICE");
-                if (deliveryMemo != null)
-                {
-                    Console.WriteLine($"[DEBUG] ⚠️ FOUND DELIVER_SERVICE MEMO: Id={deliveryMemo.Id}, Status={deliveryMemo.Status}, NextPhase={deliveryMemo.NextPhase}");
-                    Console.WriteLine($"[DEBUG] ⚠️ memoToSign matches DELIVER_SERVICE? {memoToSign?.Id == deliveryMemo.Id}");
-                }
-                
                 LogTask(job, memoToSign);
                 
                 if (job.Phase == AcpJobPhase.Negotiation && memoToSign?.NextPhase == AcpJobPhase.Transaction)
                 {
-                    Console.WriteLine($"[DEBUG] 💰 Payment handler triggered");
+                    Console.WriteLine($"💰 Paying for job {job.Id}...");
                     var paymentResult = await client.PayJobAsync(
                         jobId: job.Id,
                         memoId: memoToSign.Id,
@@ -136,13 +115,11 @@ public class JobManagementExample
                         reason: "Payment for completed work"
                     );
 
-                    Console.WriteLine($"[DEBUG] ✅ Payment completed: {paymentResult["txHash"]}");
                     Console.WriteLine($"✅ Payment processed: {paymentResult["txHash"]}");
                 }
                 else if (memoToSign?.Type == "DELIVER_SERVICE" && memoToSign?.NextPhase == AcpJobPhase.Completed)
                 {
-                    Console.WriteLine($"[DEBUG] 📦 Delivery approval handler triggered (DELIVER_SERVICE with nextPhase=4)");
-                    Console.WriteLine($"[BUYER] Approving delivery for job {job.Id}");
+                    Console.WriteLine($"📦 Approving delivery for job {job.Id}...");
                     
                     await client.SignMemoAsync(
                         memoId: memoToSign.Id,
@@ -150,61 +127,35 @@ public class JobManagementExample
                         reason: "Delivery approved, job complete"
                     );
                     
-                    Console.WriteLine($"[BUYER] ✅ Delivery approved, job moving to completion");
+                    Console.WriteLine($"✅ Delivery approved, job moving to completion");
                 }
-                /* OLD PATTERN - No longer used with DELIVER_SERVICE memos
-                else if (job.Memos.Any(m => m.Type == "REQUEST_EVALUATION" && m.Status == "APPROVED") &&
-                         job.Phase != AcpJobPhase.Completed)
-                {
-                    // This handler was for REQUEST_EVALUATION memos with nextPhase=3
-                    // Now we use DELIVER_SERVICE memos with nextPhase=4 that go directly to completion
-                }
-                */
                 else if (job.Phase == AcpJobPhase.Completed)
                 {
-                    Console.WriteLine($"[BUYER] ✅ Job completed: {job.Id}");
+                    Console.WriteLine($"✅ Job completed: {job.Id}");
                 }
                 else if (job.Phase == AcpJobPhase.Rejected)
                 {
-                    Console.WriteLine($"\n[BUYER] ❌ Job {job.Id} was REJECTED");
+                    Console.WriteLine($"\n❌ Job {job.Id} was REJECTED");
                     
                     var rejectedMemo = job.Memos.FirstOrDefault(m => m.Status == "REJECTED");
                     if (rejectedMemo != null)
                     {
-                        Console.WriteLine($"[BUYER] Rejection reason: {rejectedMemo.SignedReason}");
+                        Console.WriteLine($"Rejection reason: {rejectedMemo.SignedReason}");
                         if (!string.IsNullOrWhiteSpace(rejectedMemo.Content))
                         {
-                            Console.WriteLine($"\n[BUYER] Butler/Buyer agent would see:\n{rejectedMemo.Content}\n");
+                            Console.WriteLine($"\nButler/Buyer would see:\n{rejectedMemo.Content}\n");
                         }
                     }
-                }
-                else
-                {
-                    Console.WriteLine($"[DEBUG] ⚠️ No handler matched - Phase={job.Phase}, MemoType={memoToSign?.Type}, NextPhase={memoToSign?.NextPhase}");
-                    Console.WriteLine($"[DEBUG] ⚠️ Handlers available: Payment (Phase=Negotiation, NextPhase=Transaction), DELIVER_SERVICE (Type=DELIVER_SERVICE, NextPhase=Completed), Completed, Rejected");
                 }
             },
             onEvaluate: async (job, memo) =>
             {
-                // ⚠️ NOTE: This callback will NOT fire in self-evaluation scenarios (buyer = evaluator).
-                // In ACP v2, self-evaluation is handled in onNewTask when Phase=3.
-                // This callback only fires for EXTERNAL evaluation scenarios (when buyer ≠ evaluator).
-                // Reference: https://github.com/Virtual-Protocol/acp-node/pull/82/files (Oct 9, 2025)
+                // Note: This callback only fires for external evaluation scenarios (when buyer ≠ evaluator)
+                Console.WriteLine($"🔍 Evaluating delivered job {job.Id}...");
                 
-                Console.WriteLine($"\n[DEBUG] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                Console.WriteLine($"[DEBUG] ⭐⭐⭐ onEvaluate FIRED (External Evaluator Scenario) ⭐⭐⭐");
-                Console.WriteLine($"[DEBUG] Job={job.Id}, Phase={job.Phase}, MemoId={memo?.Id}");
-                Console.WriteLine($"[DEBUG] MemoType={memo?.Type}, MemoStatus={memo?.Status}");
-                Console.WriteLine($"[DEBUG] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-                Console.WriteLine($"[BUYER] Evaluating delivered job {job.Id}");
-                
-                // Simulate evaluation (checking deliverable quality, etc.)
                 await Task.Delay(1000);
                 
-                // Auto-approve all jobs
-                // SDK will automatically call SignMemoAsync with our result
-                Console.WriteLine($"[BUYER] ✅ Auto-approving job {job.Id}");
-                Console.WriteLine($"[DEBUG] ✅ onEvaluate returning: accept=true");
+                Console.WriteLine($"✅ Auto-approving job {job.Id}");
                 return (true, "Job delivered successfully, payment approved");
             },
            logger: logger
@@ -212,7 +163,7 @@ public class JobManagementExample
 
         try
         {
-            // await provider.StartAsync(); // DegenAI is the seller
+            // await provider.StartAsync(); // provider (seller) functionality is not tested in this example
             
             // Start client with evaluatorAddress to receive onEvaluate events
             // In self-evaluation scenarios (buyer = evaluator), this is required for onEvaluate to fire
@@ -242,7 +193,7 @@ public class JobManagementExample
         }
         finally
         {
-            // provider.Dispose(); // DegenAI is the seller
+            // provider.Dispose(); // provider (seller) functionality is not tested in this example
             client.Dispose();
         }
     }

@@ -41,7 +41,7 @@ public class VirtualsACPClient : IDisposable
         // Initialize SignalR client if callbacks are provided
         if (onNewTask != null || onEvaluate != null)
         {
-            socketClient = new ACPSocketIO(_config.AcpApiUrl, logger, _agentAddress);
+            socketClient = new ACPSocketIO(_config.AcpApiUrl, _config.ContractAddress, logger, _agentAddress);
             socketClient.OnNewTask += HandleNewTaskAsync;
             socketClient.OnEvaluate += HandleEvaluateAsync;
             OnNewTask = onNewTask;
@@ -51,6 +51,7 @@ public class VirtualsACPClient : IDisposable
 
     public string AgentAddress => _agentAddress;
     public string SignerAddress => _blockchainClient.AgentAddress;
+    public bool IsConnected => socketClient?.IsConnected ?? false;
 
     public async Task StartAsync(string? walletAddress = null, string? evaluatorAddress = null)
     {
@@ -147,8 +148,8 @@ public class VirtualsACPClient : IDisposable
             }
 
             Dictionary<string, object>? context = null;
-            if (jobData.TryGetValue("context", out var contextValue) && 
-                contextValue is JsonElement contextElement && 
+            if (jobData.TryGetValue("context", out var contextValue) &&
+                contextValue is JsonElement contextElement &&
                 contextElement.ValueKind != JsonValueKind.Null)
             {
                 context = JsonSerializer.Deserialize<Dictionary<string, object>>(contextElement.GetRawText());
@@ -173,24 +174,24 @@ public class VirtualsACPClient : IDisposable
             {
                 // In self-evaluation scenarios, the memo to sign is DELIVER_SERVICE with nextPhase=4
                 var memoToSign = job.Memos.FirstOrDefault(x => x.Type == "DELIVER_SERVICE" && x.NextPhase == AcpJobPhase.Completed);
-                
+
                 if (memoToSign == null)
                 {
                     // Fallback: try REQUEST_EVALUATION for non-self-evaluation scenarios
                     memoToSign = job.Memos.FirstOrDefault(x => x.Type == "REQUEST_EVALUATION");
                 }
-                
+
                 var (accepted, reason) = await OnEvaluate(job, memoToSign);
-                
+
                 // Sign the correct memo (the one that's PENDING and needs signature)
                 var memoIdToSign = memoToSign?.Id ?? job.LatestMemo?.Id ?? 0;
-                
+
                 if (memoIdToSign == 0)
                 {
                     _logger?.LogError("No valid memo to sign for job {JobId} evaluation", job.Id);
                     return;
                 }
-                
+
                 await SignMemoAsync(memoIdToSign, accepted, reason);
             }
         }
@@ -208,7 +209,7 @@ public class VirtualsACPClient : IDisposable
         AcpGraduationStatus? graduationStatus = null,
         AcpOnlineStatus? onlineStatus = null)
     {
-        return await _apiClient.BrowseAgentsAsync(
+        var agents = await _apiClient.BrowseAgentsAsync(
             keyword,
             cluster,
             sortBy,
@@ -217,6 +218,16 @@ public class VirtualsACPClient : IDisposable
             onlineStatus,
             _agentAddress
         );
+
+        // Filter by contract address and exclude current wallet (matching JS behavior)
+        var contractAddressLower = _config.ContractAddress.ToLowerInvariant();
+        return agents
+            .Where(agent => 
+                !string.IsNullOrEmpty(agent.WalletAddress) &&
+                !agent.WalletAddress.Equals(_agentAddress, StringComparison.OrdinalIgnoreCase) &&
+                (!string.IsNullOrEmpty(agent.ContractAddress) &&
+                 agent.ContractAddress.Equals(_config.ContractAddress, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
     }
 
     public async Task<int> InitiateJobAsync(
@@ -234,21 +245,41 @@ public class VirtualsACPClient : IDisposable
         if (providerAddress.Equals(_agentAddress, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("You cannot initiate a job with yourself as the provider");
 
-        // Create job on blockchain
-        var txHash = await _blockchainClient.CreateJobAsync(providerAddress, evalAddr, expiredAt.Value);
+        // Check for existing account between client and provider
+        var account = await GetByClientAndProviderAsync(_agentAddress, providerAddress);
+
+        var memoContent = serviceRequirement is string str
+            ? str
+            : JsonSerializer.Serialize(serviceRequirement);
+
+        string txHash;
+        if (account != null)
+        {
+            // Use existing account to create job
+            txHash = await _blockchainClient.CreateJobWithAccountAsync(
+                account.Id,
+                evalAddr,
+                amount,
+                _config.PaymentTokenAddress,
+                expiredAt.Value);
+        }
+        else
+        {
+            // Create new job without account
+            txHash = await _blockchainClient.CreateJobAsync(
+                providerAddress,
+                evalAddr,
+                expiredAt.Value,
+                _config.PaymentTokenAddress,
+                amount,
+                memoContent);
+        }
 
         var jobId = await _blockchainClient.GetJobIdFromTransactionAsync(txHash);
 
         await Task.Delay(2000); // needed for some reason, maybe rpc to slow??
 
-        // Set budget
-        await _blockchainClient.SetBudgetWithPaymentTokenAsync((int)jobId, amount);
-        
         // Create initial memo
-        var memoContent = serviceRequirement is string str
-            ? str
-            : JsonSerializer.Serialize(serviceRequirement);
-
         await _blockchainClient.CreateMemoAsync(
             (int)jobId,
             memoContent,
@@ -334,7 +365,7 @@ public class VirtualsACPClient : IDisposable
         // This tells the seller that payment is complete and they should deliver
         // Reference: Official Python SDK's pay_and_accept_requirement() does this
         await Task.Delay(5000); // Allow payment memo to settle
-        
+
         await _blockchainClient.CreateMemoAsync(
             jobId,
             $"Payment made. {reason ?? ""}".Trim(),
@@ -342,9 +373,9 @@ public class VirtualsACPClient : IDisposable
             true,
             AcpJobPhase.Evaluation // ← Transitions job to EVALUATION phase, triggers seller
         );
-        
+
         _logger?.LogInformation("Created EVALUATION trigger memo for job {JobId}", jobId);
-        
+
         return new Dictionary<string, object> { ["txHash"] = txHash };
     }
 
@@ -365,9 +396,10 @@ public class VirtualsACPClient : IDisposable
             receiverAddress,
             feeAmount,
             feeType,
-            nextPhase,
             MemoType.PayableRequest,
-            expiredAt
+            expiredAt,
+            false,
+            nextPhase
         );
 
         return txHash;
@@ -418,9 +450,10 @@ public class VirtualsACPClient : IDisposable
             receiverAddress,
             feeAmount,
             feeType,
-            nextPhase,
             MemoType.PayableTransferEscrow,
-            expiredAt
+            expiredAt,
+            false,
+            nextPhase
         );
 
         _logger?.LogInformation(
@@ -493,6 +526,11 @@ public class VirtualsACPClient : IDisposable
         return await _apiClient.GetCancelledJobsAsync(_agentAddress, page, pageSize);
     }
 
+    public async Task<List<ACPJob>> GetPendingMemoJobsAsync(int page = 1, int pageSize = 10)
+    {
+        return await _apiClient.GetPendingMemoJobsAsync(_agentAddress, page, pageSize);
+    }
+
     public async Task<ACPJob?> GetJobByIdAsync(int jobId)
     {
         return await _apiClient.GetJobByIdAsync(jobId, _agentAddress);
@@ -506,6 +544,48 @@ public class VirtualsACPClient : IDisposable
     public async Task<IACPAgent?> GetAgentAsync(string walletAddress)
     {
         return await _apiClient.GetAgentAsync(walletAddress);
+    }
+
+    public async Task<AcpAccount?> GetAccountByJobIdAsync(int jobId)
+    {
+        var accountData = await _apiClient.GetAccountByJobIdAsync(jobId);
+        if (accountData == null)
+        {
+            return null;
+        }
+
+        var metadata = accountData.Metadata ?? new Dictionary<string, object>();
+        return new AcpAccount(
+            _blockchainClient,
+            accountData.Id,
+            accountData.ClientAddress,
+            accountData.ProviderAddress,
+            metadata);
+    }
+
+    public async Task<AcpAccount?> GetByClientAndProviderAsync(string clientAddress, string providerAddress)
+    {
+        var accountData = await _apiClient.GetAccountByClientAndProviderAsync(clientAddress, providerAddress);
+        if (accountData == null)
+        {
+            return null;
+        }
+
+        var metadata = accountData.Metadata ?? new Dictionary<string, object>();
+        return new AcpAccount(
+            _blockchainClient,
+            accountData.Id,
+            accountData.ClientAddress,
+            accountData.ProviderAddress,
+            metadata);
+    }
+
+    public async Task<string> CreateAccountAsync(string providerAddress, Dictionary<string, object> metadata)
+    {
+        var metadataJson = System.Text.Json.JsonSerializer.Serialize(metadata);
+        var txHash = await _blockchainClient.CreateAccountAsync(providerAddress, metadataJson);
+        _logger?.LogInformation("Account creation transaction sent: {TxHash}", txHash);
+        return txHash;
     }
 
     public void Dispose()

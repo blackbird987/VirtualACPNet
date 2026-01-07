@@ -165,7 +165,6 @@ public class NethereumBlockchainClient : IDisposable
                 isSecured,
                 (int)nextPhase);
 
-            _logger?.LogInformation("Memo creation transaction sent: {TxHash}", txHash);
             return txHash;
         }
         catch (Exception ex)
@@ -210,7 +209,6 @@ public class NethereumBlockchainClient : IDisposable
                 isSecured,
                 (int)nextPhase);
 
-            _logger?.LogInformation("Payable memo creation transaction sent: {TxHash}", txHash);
             return txHash;
         }
         catch (Exception ex)
@@ -231,7 +229,7 @@ public class NethereumBlockchainClient : IDisposable
                 isApproved,
                 reason);
 
-            _logger?.LogInformation("Memo signing transaction sent: {TxHash}", txHash);
+            // Memo signing transaction sent - routine blockchain operation, no need to log
             return txHash;
         }
         catch (Exception ex)
@@ -696,7 +694,6 @@ public class NethereumBlockchainClient : IDisposable
     {
         try
         {
-            _logger?.LogInformation("Signing message with smart contract: {SmartContractAddress}", _signerAddress);
 
             // For ERC6900, we need to call the execute function with the signature data
             // This assumes the smart contract has been deployed and configured properly
@@ -720,7 +717,6 @@ public class NethereumBlockchainClient : IDisposable
                 inParams
                 );
 
-            _logger?.LogInformation("Smart contract signing transaction sent: {TxHash}", txHash);
             return txHash.TransactionHash;
         }
         catch (Exception ex)

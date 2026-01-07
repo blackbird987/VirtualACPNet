@@ -114,7 +114,7 @@ public class VirtualsACPClient : IDisposable
                 AcpClient = this
             };
 
-            _logger?.LogInformation("Received new task: {Job}", job.ToString());
+            // Received new task - routine ACP operation, no need to log
 
             if (OnNewTask != null)
             {
@@ -321,8 +321,7 @@ public class VirtualsACPClient : IDisposable
             if (!accept)
                 return txHash;
 
-            _logger?.LogInformation("Responding to job {JobId} with memo {MemoId} and accept {Accept} and reason {Reason}",
-                jobId, memoId, accept, reason);
+            // Responding to job - routine ACP operation, no need to log
 
             await Task.Delay(5000); // virtual backend needs this, has issues sending event
 
@@ -334,8 +333,7 @@ public class VirtualsACPClient : IDisposable
                 AcpJobPhase.Transaction
             );
 
-            _logger?.LogInformation("Responded to job {JobId} with memo {MemoId} and accept {Accept} and reason {Reason}",
-                jobId, memoId, accept, reason);
+            // Responded to job - routine ACP operation, no need to log
 
             return txHash;
         }
@@ -499,7 +497,7 @@ public class VirtualsACPClient : IDisposable
             AcpJobPhase.Completed  // ✅ CORRECT: Creates memo with nextPhase=4, job completes after buyer approval (matches official SDK)
         );
 
-        _logger?.LogInformation("Delivered job {JobId} with nextPhase=Completed", jobId);
+        // Delivered job - routine ACP operation, no need to log
         return txHash;
     }
 

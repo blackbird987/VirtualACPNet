@@ -142,17 +142,14 @@ public class ACPSocketIO : IDisposable
                 authData["evaluatorAddress"] = evaluatorAddress;
                 _logger?.LogInformation("━━━ Registering as evaluator: {EvaluatorAddress} ━━━", evaluatorAddress);
             }
-            else
-            {
-                _logger?.LogWarning("No evaluatorAddress provided - onEvaluate events may not fire");
-            }
+            // Note: evaluatorAddress is optional - if not provided, onEvaluate events won't fire (expected behavior)
 
             // Set auth data before connecting
             _client.Options.Auth = authData;
 
             // Connect to the Socket.IO server
             await _client.ConnectAsync();
-            _logger?.LogInformation("Socket.IO connection started for wallet: {WalletAddress}", walletAddress);
+            // Socket.IO connection started - routine operation, no need to log (connection established log is sufficient)
         }
         catch (Exception ex)
         {

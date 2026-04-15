@@ -36,7 +36,7 @@ public class AcpX402Service
         _logger = logger;
     }
 
-    public async Task<string> SignUpdateJobNonceMessageAsync(int jobId, string nonce)
+    public Task<string> SignUpdateJobNonceMessageAsync(int jobId, string nonce)
     {
         try
         {
@@ -46,7 +46,7 @@ public class AcpX402Service
             var signature = signer.Sign(messageBytes, _account.PrivateKey);
 
             _logger?.LogInformation("Signed nonce update message for job {JobId}", jobId);
-            return signature;
+            return Task.FromResult(signature);
         }
         catch (Exception ex)
         {
@@ -116,10 +116,6 @@ public class AcpX402Service
             var tokenContract = _web3.Eth.GetContract(ContractAbis.Erc20Abi, usdcContract);
             var nameFunction = tokenContract.GetFunction("name");
             var tokenName = await nameFunction.CallAsync<string>();
-
-            // For version, we'll need to check if there's a version function
-            // For now, we'll use a default or read from config
-            var tokenVersion = "2"; // Default for USDC V2
 
             // Generate random nonce
             var nonceBytes = new byte[32];

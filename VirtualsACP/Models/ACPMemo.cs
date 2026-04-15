@@ -9,7 +9,7 @@ public class ACPMemo
     public int Id { get; set; }
 
     [JsonPropertyName("type")]
-    public string Type { get; set; }
+    public string Type { get; set; } = string.Empty;
 
     [JsonPropertyName("content")]
     public string Content { get; set; } = string.Empty;
@@ -18,7 +18,7 @@ public class ACPMemo
     public AcpJobPhase NextPhase { get; set; }
 
     [JsonPropertyName("status")]
-    public string Status { get; set; }
+    public string Status { get; set; } = string.Empty;
 
     [JsonPropertyName("signedReason")]
     public string? SignedReason { get; set; }

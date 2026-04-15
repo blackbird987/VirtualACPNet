@@ -14,7 +14,7 @@ public class ACPSocketIO : IDisposable
     public event Func<object, Task>? OnEvaluate;
     public event Func<object, Task>? OnNewTask;
 
-    public ACPSocketIO(string socketUrl, string contract, ILogger? logger = null, string agent = null)
+    public ACPSocketIO(string socketUrl, string contract, ILogger? logger = null, string? agent = null)
     {
         _logger = logger;
 

@@ -62,7 +62,7 @@ public class ConfigurationExample
         }
     }
 
-    private static async Task CreateClientWithEnvironmentVariables()
+    private static Task CreateClientWithEnvironmentVariables()
     {
         try
         {
@@ -115,5 +115,7 @@ public class ConfigurationExample
         {
             Console.WriteLine($"  ❌ Error with environment variables: {ex.Message}");
         }
+
+        return Task.CompletedTask;
     }
 }

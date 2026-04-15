@@ -45,7 +45,7 @@ public class JobManagementExample
         // COMMENTED OUT: Seller/provider functionality is not tested in this example
         // We only need the buyer/client in this example to avoid wallet conflicts
         // VirtualsACPClient provider = null;
-        VirtualsACPClient client = null;
+        VirtualsACPClient? client = null;
         
         /* PROVIDER COMMENTED OUT - example is currently only tested as buyer
         provider = new VirtualsACPClient(
@@ -108,7 +108,7 @@ public class JobManagementExample
                 if (job.Phase == AcpJobPhase.Negotiation && memoToSign?.NextPhase == AcpJobPhase.Transaction)
                 {
                     Console.WriteLine($"💰 Paying for job {job.Id}...");
-                    var paymentResult = await client.PayJobAsync(
+                    var paymentResult = await client!.PayJobAsync(
                         jobId: job.Id,
                         memoId: memoToSign.Id,
                         amount: 0.1m,
@@ -120,8 +120,8 @@ public class JobManagementExample
                 else if (memoToSign?.Type == "DELIVER_SERVICE" && memoToSign?.NextPhase == AcpJobPhase.Completed)
                 {
                     Console.WriteLine($"📦 Approving delivery for job {job.Id}...");
-                    
-                    await client.SignMemoAsync(
+
+                    await client!.SignMemoAsync(
                         memoId: memoToSign.Id,
                         accept: true,
                         reason: "Delivery approved, job complete"
